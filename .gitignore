@@ -1,2 +1,3 @@
 .env
 streamlit.py
+__pycache__
