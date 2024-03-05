@@ -20,7 +20,7 @@ if mode == 'Text':
     # Streamlitアプリのタイトル
     st.title("Claude3-Streamlit")
     # ユーザー入力を受け取る
-    user_input = st.text_input("質問を入力してください", placeholder="日本で２番目に高い山は？名前だけ教えて")
+    user_input = st.text_area("テキストを入力してください", placeholder="日本で２番目に高い山は？名前だけ教えて", height=200)
     # 送信ボタンが押されたときの処理
     if st.button("送信"):
         # ClaudeLlm クラスのインスタンスを作成
@@ -45,7 +45,7 @@ elif mode == 'Vision':
     if uploaded_file is not None:
         st.image(uploaded_file, caption="アップロードされた画像", use_column_width=True)
         # ファイルの拡張子を取得
-        prompt = st.text_input("質問を入力してください", placeholder="画像について説明してください。")
+        prompt = st.text_area("テキストを入力してください", placeholder="画像について説明してください。", height=200)
         file_extension = os.path.splitext(uploaded_file.name)[1].lower()
 
         # 拡張子に基づいてメディアタイプを設定
