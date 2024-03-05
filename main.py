@@ -1,10 +1,8 @@
 import streamlit as st
 import anthropic
-from anthropic.types.message_stream_event import MessageStartEvent, MessageDeltaEvent, ContentBlockDeltaEvent
-import time
-import pandas as pd
-from forex_python.converter import CurrencyRates
-
+from claude import ClaudeLlm  # claude.py から ClaudeLlm クラスをインポート
+import os
+import base64
 
 # 環境変数からAPIキーを取得する代わりに、サイドバーから入力を受け取る
 api_key = st.sidebar.text_input("APIキーを入力してください", type="password", help="APIキーをここに入力してください。")
@@ -14,100 +12,83 @@ if not api_key:
     st.error("APIキーが必要です。サイドバーから入力してください。")
 else:
     client = anthropic.Anthropic(api_key=api_key)
-
-# Streamlitアプリのタイトル
-st.title("Claude3-Streamlit")
-
-# ユーザー入力を受け取る
-user_input = st.text_input("質問を入力してください", placeholder="日本で２番目に高い山は？名前だけ教えて")
-# jpy_rate = st.empty()
-# コスト計算結果を格納するDataFrameを初期化
-cost_df = pd.DataFrame(columns=["Model", "Input Tokens", "Output Tokens", "Input Cost", "Output Cost", "Total Cost","総計_円換算","処理時間"])
-# 為替レートを取得してUSDからJPYへ換算する関数
-def convert_usd_to_jpy(usd_amount):
-    c = CurrencyRates()
-    try:
-        rate = c.get_rate('USD', 'JPY')
-        jpy_rate=(f"為替レート: {rate:.2f}円/ドル")
-        return usd_amount * rate, jpy_rate
-    except Exception as e:
-        # print(f"為替レートの取得に失敗しました: {e}. フォールバック為替レートを使用します。")
-        rate = 150  # フォールバックとして使用する為替レート
-        jpy_rate=(f"為替レート: {rate:.2f}円/ドル想定")
-        return usd_amount * rate, jpy_rate
-def calculate_cost(model, input_tokens, output_tokens):
-    # トークンごとのコストを定義
-    token_costs = {
-        "claude-3-opus-20240229": {"input": 0.000015, "output": 0.000075},
-        "claude-3-sonnet-20240229": {"input": 0.000003, "output": 0.000015},
-    }
     
-    # 指定されたモデルのコストを取得
-    model_costs = token_costs[model]
-    
-    # コストを計算
-    input_cost = input_tokens * model_costs["input"]
-    output_cost = output_tokens * model_costs["output"]
-    total_cost = input_cost + output_cost
-    
-    return input_cost, output_cost, total_cost
+# モード選択
+mode = st.sidebar.radio("モードを選択してください", ('Text', 'Vision'))
 
-def generate_responses(model_name):
-    global cost_df
-    start_time = time.time()
-    input_tokens = 0
-    output_tokens = 0
-    try:
-        with client.messages.stream(
-            model=model_name,  # モデル名を動的に指定
-            max_tokens=1024,
-            messages=[{"role": "user", "content": user_input}],
-        ) as stream:
-            for event in stream:
-                if isinstance(event, MessageStartEvent):
-                    usage_info = event.message.usage
-                    input_tokens = usage_info.input_tokens
-                elif isinstance(event, MessageDeltaEvent):
-                    output_tokens = event.usage.output_tokens
-                elif isinstance(event, ContentBlockDeltaEvent):
-                    return_text = event.delta.text
-                    yield return_text
-    except anthropic.APIStatusError as e:
-        # responseをJSON形式で取得し、エラー情報を確認
-        error_response = e.response.json()  # responseを辞書として取得
-        if 'error' in error_response and error_response['error'].get('type') == 'overloaded_error':
-            st.error("APIが過負荷状態です。しばらくしてから再試行してください。")
-            return
+if mode == 'Text':
+    # Streamlitアプリのタイトル
+    st.title("Claude3-Streamlit")
+    # ユーザー入力を受け取る
+    user_input = st.text_input("質問を入力してください", placeholder="日本で２番目に高い山は？名前だけ教えて")
+    # 送信ボタンが押されたときの処理
+    if st.button("送信"):
+        # ClaudeLlm クラスのインスタンスを作成
+        claude = ClaudeLlm(client, user_input)
+        
+        col1, col2 = st.columns(2)  # 画面を2つのカラムに分割
+        with col1:
+            st.write("Opus応答:")
+            st.write_stream(claude.generate_responses("claude-3-opus-20240229"))
+        with col2:
+            st.write("Sonnet応答:")
+            st.write_stream(claude.generate_responses("claude-3-sonnet-20240229"))
+        # コスト計算結果を表示
+        st.table(claude.cost_df)
+        _, jpy_rate = claude.convert_usd_to_jpy(1)  # 1USDの為替レートを取得するためのダミー呼び出し
+        st.write(jpy_rate)
 
-    input_cost, output_cost, total_cost = calculate_cost(model_name, input_tokens, output_tokens)
-    jpy_total_cost, _ = convert_usd_to_jpy(total_cost)
-    end_time = time.time()
-    response_time = end_time - start_time
-    # DataFrameに結果を追加
-    new_row = {
-        "Model": model_name,
-        "Input Tokens": input_tokens,
-        "Output Tokens": output_tokens,
-        "Input Cost": f"${input_cost:.6f}",
-        "Output Cost": f"${output_cost:.6f}",
-        "Total Cost": f"${total_cost:.6f}",
-        "総計_円換算": f"¥{jpy_total_cost:.3f}",
-        "処理時間": f"{response_time:.2f}秒"
-    }
-    new_row_df = pd.DataFrame([new_row])
-    cost_df = pd.concat([cost_df, new_row_df], ignore_index=True)
+elif mode == 'Vision':
+    st.title("Claude3-Streamlit-vision")
+    uploaded_file = st.file_uploader("画像ファイルを選択してください", type=["jpg", "jpeg", "png", "gif"])
 
-# 送信ボタンが押されたときの処理
-if st.button("送信"):
-    col1, col2 = st.columns(2)  # 画面を2つのカラムに分割
-    with col1:
-        st.write("Opus応答:")
-        st.write_stream(generate_responses("claude-3-opus-20240229"))
-    with col2:
-        st.write("Sonnet応答:")
-        st.write_stream(generate_responses("claude-3-sonnet-20240229"))  
-    st.table(cost_df)
-    _, jpy_rate = convert_usd_to_jpy(1)  # 1USDの為替レートを取得するためのダミー呼び出し
-    st.write(jpy_rate)
-    
+    if uploaded_file is not None:
+        st.image(uploaded_file, caption="アップロードされた画像", use_column_width=True)
+        # ファイルの拡張子を取得
+        prompt = st.text_input("質問を入力してください", placeholder="画像について説明してください。")
+        file_extension = os.path.splitext(uploaded_file.name)[1].lower()
+
+        # 拡張子に基づいてメディアタイプを設定
+        if file_extension in [".jpg", ".jpeg"]:
+            image_media_type = "image/jpeg"
+        elif file_extension == ".png":
+            image_media_type = "image/png"
+        elif file_extension == ".gif":
+            image_media_type = "image/gif"
+        else:
+            st.error("サポートされていないファイル形式です。")
+            st.stop()
+
+        image_data = base64.b64encode(uploaded_file.read()).decode("utf-8")
+
+        # prompt の設定
+
+        user_input = [
+            {
+                "type": "image",
+                "source": {
+                    "type": "base64",
+                    "media_type": image_media_type,
+                    "data": image_data,
+                },
+            },
+            {
+                "type": "text",
+                "text": prompt
+            }
+        ]
+        if st.button("送信"):
+            # ClaudeLlm クラスのインスタンスを作成
+            claude = ClaudeLlm(client, user_input)
+            col1, col2 = st.columns(2)  # 画面を2つのカラムに分割
+            with col1:
+                st.write("Opus応答:")
+                st.write_stream(claude.generate_responses("claude-3-opus-20240229"))
+            with col2:
+                st.write("Sonnet応答:")
+                st.write_stream(claude.generate_responses("claude-3-sonnet-20240229"))
+            # コスト計算結果を表示
+            st.table(claude.cost_df)
+            _, jpy_rate = claude.convert_usd_to_jpy(1)  # 1USDの為替レートを取得するためのダミー呼び出し
+            st.write(jpy_rate)
 
