@@ -1,0 +1,4 @@
+anthropic==0.18.1
+forex-python==1.8
+pandas==2.0.3
+streamlit==1.31.1
